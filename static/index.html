@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TRINETRA | Command & Control</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <div id="map"></div>
+
+    <div class="hud-container">
+        <div class="hud-module top-left branding-module">
+            <div class="module-header">
+                <div class="brand-text">
+                    <h1 class="tactical-title">TRINETRA</h1>
+                </div>
+            </div>
+        </div>
+
+        <div class="hud-module top-right profile-module">
+            <div class="temporal-data">
+                <span class="clock-label">SYSTEM TIME</span>
+                <span id="clock" class="tactical-clock">00:00:00</span>
+            </div>
+        </div>
+
+        <div class="hud-module bottom-left user-module">
+            <div class="user-anchor">
+                <button class="tactical-profile-btn" id="profile-btn" onclick="toggleUserMenu(event)">
+                    <div class="avatar-shield">
+                        SP
+                        <div class="status-dot"></div>
+                    </div>
+                </button>
+
+                <div id="user-menu" class="tactical-dropdown hidden">
+                    <div class="menu-header">
+                        <div class="menu-avatar">
+                            SP
+                            <div class="menu-status-dot"></div>
+                        </div>
+                        <div class="menu-user-info">
+                            <span class="menu-name">Superintendent</span>
+                            <span class="menu-email">command@trinetra.gov</span>
+                        </div>
+                    </div>
+
+                    <div class="menu-divider"></div>
+
+                    <div class="menu-group">
+                        <div class="group-label">TACTICAL VIEW</div>
+                        <button class="dropdown-item" onclick="setMapMode('dark')">
+                            <span class="material-icons-round item-icon">dark_mode</span>
+                            <span class="item-text">Dark Operations</span>
+                            <span class="item-shortcut">⌘+D</span>
+                        </button>
+                        <button class="dropdown-item" onclick="setMapMode('satellite')">
+                            <span class="material-icons-round item-icon">satellite_alt</span>
+                            <span class="item-text">Satellite Feed</span>
+                            <span class="item-shortcut">⌘+S</span>
+                        </button>
+                        <button class="dropdown-item" onclick="setMapMode('light')">
+                            <span class="material-icons-round item-icon">light_mode</span>
+                            <span class="item-text">Day Mode</span>
+                            <span class="item-shortcut">⌘+L</span>
+                        </button>
+                    </div>
+
+                    <div class="menu-divider"></div>
+
+                    <div class="menu-group">
+                        <button class="dropdown-item" onclick="toggleAccessRequests()">
+                            <span class="material-icons-round item-icon">verified_user</span>
+                            <span class="item-text">Access Requests</span>
+                            <span id="request-badge" class="badge hidden">0</span>
+                        </button>
+                        <button class="dropdown-item">
+                            <span class="material-icons-round item-icon">settings</span>
+                            <span class="item-text">System Config</span>
+                        </button>
+                        <button class="dropdown-item danger">
+                            <span class="material-icons-round item-icon">power_settings_new</span>
+                            <span class="item-text">Log Out</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="hud-module boxed bottom-center nav-module">
+            <button class="nav-btn active" id="nav-all" onclick="filterMap('all')">
+                <span class="material-icons-round">layers</span>
+                BOTH
+            </button>
+            <button class="nav-btn" id="nav-drones" onclick="filterMap('drones')">
+                <span class="material-icons-round">radar</span>
+                DRONES
+            </button>
+            <button class="nav-btn" id="nav-officers" onclick="filterMap('officers')">
+                <span class="material-icons-round">groups</span>
+                OFFICERS
+            </button>
+        </div>
+        <div class="hud-module bottom-right">
+            <button id="btn-emergency" class="tactical-btn alert" onclick="toggleEmergencyMode()"
+                title="DISPATCH NEAREST">
+                <span class="material-icons-round">crisis_alert</span>
+            </button>
+        </div>
+    </div>
+
+    <div id="command-panel" class="command-panel hidden">
+        <div class="cmd-header">
+            <div class="cmd-identity">
+                <span class="drone-icon material-icons-round">gpp_good</span>
+                <div class="id-group">
+                    <h2 id="cmd-drone-id">DRONE-01</h2>
+                    <span class="status-indicator">OPERATIONAL</span>
+                </div>
+            </div>
+            <button class="close-cmd-btn" onclick="deselectDrone()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+
+        <div class="cmd-section">
+            <div class="section-label">LIVE OPTICAL FEED</div>
+            <div class="video-thumbnail-container" onclick="openVideoModal()">
+                <div class="live-badge">● LIVE</div>
+                <div class="expand-overlay">
+                    <span class="material-icons-round">fullscreen</span>
+                </div>
+                <img id="drone-feed" src="" alt="NO SIGNAL"
+                    onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+                <div class="no-signal-placeholder">
+                    <span class="material-icons-round">videocam_off</span>
+                    <span>SIGNAL LOST</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="cmd-section">
+            <div class="section-label">TELEMETRY</div>
+            <div class="telemetry-grid">
+                <div class="tele-item">
+                    <span class="label">LATITUDE</span>
+                    <span class="value" id="cmd-lat">--</span>
+                </div>
+                <div class="tele-item">
+                    <span class="label">LONGITUDE</span>
+                    <span class="value" id="cmd-lng">--</span>
+                </div>
+                <div class="tele-item full-width">
+                    <span class="label">BATTERY INTEGRITY</span>
+                    <div class="battery-track">
+                        <div id="cmd-batt-bar" class="battery-level" style="width: 0%;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="cmd-section">
+            <div class="section-label">COMMAND OVERRIDE</div>
+            <div class="control-grid">
+                <button class="ctrl-btn warning" onclick="sendEmergencyCommand('RTL')">
+                    <span class="material-icons-round">home</span>
+                    <span>RTH</span>
+                </button>
+                <button class="ctrl-btn danger" onclick="sendEmergencyCommand('LAND')">
+                    <span class="material-icons-round">flight_land</span>
+                    <span>LAND</span>
+                </button>
+                <button id="btn-goto" class="ctrl-btn primary full-width" onclick="toggleGotoMode()">
+                    <span class="material-icons-round">location_searching</span>
+                    <span>SET TARGET LOCATION</span>
+                </button>
+            </div>
+            <div id="goto-instruction" class="instruction-text hidden">
+                <span class="blink">●</span> TAP MAP TO SET COORDINATES
+            </div>
+        </div>
+    </div>
+
+    <div id="officer-panel" class="officer-panel hidden">
+        <div class="cmd-header">
+            <div class="cmd-identity">
+                <span class="officer-icon material-icons-round">badge</span>
+                <div class="id-group">
+                    <h2 id="officer-name">OFFICER</h2>
+                    <span class="status-indicator" id="officer-status">ONLINE</span>
+                </div>
+            </div>
+            <button class="close-cmd-btn" onclick="deselectOfficer()">
+                <span class="material-icons-round">close</span>
+            </button>
+        </div>
+
+        <div class="cmd-section">
+            <div class="section-label">OFFICER IDENTITY</div>
+            <div class="officer-photo-container">
+                <div class="photo-frame-officer">
+                    <img id="officer-photo" src="" alt="Officer"
+                        onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+                    <div class="no-photo-placeholder">
+                        <span class="material-icons-round">person</span>
+                        <span>NO PHOTO</span>
+                    </div>
+                    <div class="scan-line-officer"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="cmd-section">
+            <div class="section-label">SERVICE DETAILS</div>
+            <div class="officer-info-grid">
+                <div class="info-item-officer">
+                    <span class="label">BADGE NUMBER</span>
+                    <span class="value" id="officer-badge">--</span>
+                </div>
+                <div class="info-item-officer">
+                    <span class="label">RANK</span>
+                    <span class="value" id="officer-rank">--</span>
+                </div>
+                <div class="info-item-officer full-width">
+                    <span class="label">ASSIGNED STATION</span>
+                    <span class="value" id="officer-station">--</span>
+                </div>
+                <div class="info-item-officer">
+                    <span class="label">DISTRICT</span>
+                    <span class="value" id="officer-district">--</span>
+                </div>
+                <div class="info-item-officer">
+                    <span class="label">SECURE COMMS</span>
+                    <span class="value" id="officer-mobile">--</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="cmd-section">
+            <div class="section-label">STATUS REPORT</div>
+            <div class="telemetry-grid">
+                <div class="tele-item full-width">
+                    <span class="label">LAST UPDATE RECEIVED</span>
+                    <span class="value" id="officer-last-seen" style="color: #fff;">Syncing...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="cmd-section">
+            <div class="section-label">SERVICE RECORD</div>
+            <div class="achievements-container">
+                <div class="achievement-badge">
+                    <span class="material-icons-round">military_tech</span>
+                    <span>Exemplary Service</span>
+                </div>
+                <div class="achievement-badge">
+                    <span class="material-icons-round">verified</span>
+                    <span>Active Duty</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="video-modal" class="modal-overlay hidden">
+        <div class="modal-container">
+            <div class="modal-header">
+                <span class="modal-title">LIVE FEED // <span id="modal-drone-id">--</span></span>
+                <button class="modal-close" onclick="closeVideoModal()">✕</button>
+            </div>
+            <div class="full-video-wrapper">
+                <img id="full-drone-feed" src="" alt="NO SIGNAL">
+            </div>
+        </div>
+    </div>
+
+    <div id="requests-modal" class="modal-overlay hidden">
+        <div class="modal-container large tactical-glass">
+            <div class="modal-header">
+                <div class="header-content">
+                    <span class="modal-icon material-icons-round">verified_user</span>
+                    <span class="modal-title">ACCESS REQUESTS <span class="accent">// PENDING</span></span>
+                </div>
+                <button class="modal-close" onclick="toggleAccessRequests()">✕</button>
+            </div>
+            <div class="requests-content">
+                <div id="requests-grid" class="requests-grid">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="dossier-modal" class="modal-overlay hidden" style="z-index: 10000;">
+        <div class="modal-container medium tactical-glass">
+            <div class="modal-header">
+                <div class="header-content">
+                    <span class="modal-icon material-icons-round">badge</span>
+                    <span class="modal-title">OFFICER DOSSIER <span class="accent" id="dossier-id">// --</span></span>
+                </div>
+                <button class="modal-close" onclick="closeDossier()">✕</button>
+            </div>
+
+            <div class="dossier-body">
+                <div class="dossier-layout">
+                    <div class="dossier-photo-section">
+                        <div class="photo-frame">
+                            <img id="dossier-photo" src="" alt="Officer" class="dossier-img">
+                            <div class="scan-line"></div>
+                        </div>
+                        <div class="photo-caption">ID VERIFICATION</div>
+                    </div>
+
+                    <div class="dossier-info-section">
+                        <div class="officer-header">
+                            <h2 id="dossier-name">--</h2>
+                            <div class="rank-tag" id="dossier-rank">RANK</div>
+                        </div>
+
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <span class="label">BADGE NUMBER</span>
+                                <span class="value" id="dossier-badge">--</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="label">STATION ID</span>
+                                <span class="value" id="dossier-station">--</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="label">DISTRICT</span>
+                                <span class="value" id="dossier-district">--</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="label">CONTACT</span>
+                                <span class="value" id="dossier-mobile">--</span>
+                            </div>
+                            <div class="info-item full">
+                                <span class="label">OFFICIAL EMAIL</span>
+                                <span class="value" id="dossier-email">--</span>
+                            </div>
+                        </div>
+
+                        <div class="attachment-actions">
+                            <a id="link-idcard" href="#" target="_blank" class="action-chip">
+                                <span class="material-icons-round">fingerprint</span> ID CARD
+                            </a>
+                            <a id="link-pdf" href="#" target="_blank" class="action-chip">
+                                <span class="material-icons-round">description</span> FULL REPORT
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dossier-footer">
+                    <button class="tactical-btn approve-btn" onclick="openConfirmModal()">
+                        <span class="material-icons-round">verified</span> AUTHORIZE ENTRY
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="confirm-modal" class="modal-overlay hidden" style="z-index: 11000;">
+        <div class="confirm-box">
+            <span class="material-icons-round confirm-icon">admin_panel_settings</span>
+            <h3>CONFIRM AUTHORIZATION</h3>
+            <p>Are you sure you want to grant system access to this officer?</p>
+            <div class="confirm-actions">
+                <button class="tactical-btn cancel" onclick="closeConfirmModal()">CANCEL</button>
+                <button class="tactical-btn confirm" onclick="executeApproval()">GRANT ACCESS</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="script.js"></script>
+</body>
+
+</html>
