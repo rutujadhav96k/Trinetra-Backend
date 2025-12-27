@@ -56,7 +56,7 @@ class OfficerState:
 
 
 # MongoDB Configuration
-MONGO_DETAILS = "mongodb://localhost:27017"
+MONGO_DETAILS = os.getenv("MONGO_DETAILS", "mongodb://localhost:27017")
 
 # Directory Setup
 BASE_UPLOAD_DIR = "static/uploads"
