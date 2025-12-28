@@ -56,6 +56,11 @@ class OfficerState:
     is_online: bool
     last_location: Dict[str, Any] | None
     last_seen: datetime
+    sos_active: bool = False
+    sos_triggered_at: datetime | None = None
+    sos_type: str | None = None  # "high_emergency", "audio_message", "text_message"
+    sos_message: str | None = None
+    sos_audio_url: str | None = None
 
 
 # MongoDB Configuration
@@ -352,7 +357,12 @@ def _serialize_officer(state: OfficerState) -> Dict[str, Any]:
         "is_online": state.is_online,
         "last_location": state.last_location,
         "last_seen": state.last_seen.isoformat(),
+        "sos_active": state.sos_active,
+        "sos_type": state.sos_type,
+        "sos_message": state.sos_message,
+        "sos_triggered_at": state.sos_triggered_at.isoformat() if state.sos_triggered_at else None,
     }
+
 
 
 @app.get("/api/officers")
@@ -467,6 +477,194 @@ async def ingest_officer_location(officer_id: str, payload: OfficerLocationUpdat
     )
     print(f"✅ Broadcast complete for officer {officer_id}")
     return {"ok": True}
+
+
+# --- SOS EMERGENCY ENDPOINTS ---
+
+from math import radians, cos, sin, asin, sqrt
+
+def calculate_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Calculate the great circle distance in kilometers between two points"""
+    lon1, lat1, lon2, lat2 = map(radians, [lng1, lat1, lng2, lat2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * asin(sqrt(a))
+    r = 6371  # Radius of earth in kilometers
+    return c * r
+
+
+def find_nearby_officers(officer_id: str, lat: float, lng: float, radius_km: float = 2.0) -> List[str]:
+    """Find officers within radius_km of the given location"""
+    nearby = []
+    for oid, officer in officers.items():
+        if oid == officer_id or not officer.is_online:
+            continue
+        if officer.last_location:
+            distance = calculate_distance(
+                lat, lng,
+                officer.last_location['lat'],
+                officer.last_location['lng']
+            )
+            if distance <= radius_km:
+                nearby.append(oid)
+    return nearby
+
+
+class SOSTrigger(BaseModel):
+    lat: float
+    lng: float
+    officer_name: str
+    badge_number: str | None = None
+    emergency_type: str
+    message_text: str | None = None
+    audio_duration: float | None = None
+
+
+class SOSCancel(BaseModel):
+    reason: str = "cancelled_by_officer"
+
+
+@app.post("/api/officers/{officer_id}/sos")
+async def trigger_sos(
+    officer_id: str,
+    lat: float = Form(...),
+    lng: float = Form(...),
+    officer_name: str = Form(...),
+    badge_number: str = Form(None),
+    emergency_type: str = Form(...),
+    message_text: str = Form(None),
+    audio_duration: float = Form(None),
+    audio: UploadFile = File(None),
+) -> Dict[str, Any]:
+    """Trigger SOS emergency alert"""
+    print(f"🚨 SOS TRIGGERED: Officer {officer_id} ({officer_name})")
+    print(f"   Type: {emergency_type}, Location: ({lat}, {lng})")
+    
+    now = datetime.utcnow()
+    audio_url = None
+    
+    # Handle audio upload
+    if audio and emergency_type == "audio_message":
+        use_cloudinary = all([
+            os.getenv("CLOUDINARY_CLOUD_NAME"),
+            os.getenv("CLOUDINARY_API_KEY"),
+            os.getenv("CLOUDINARY_API_SECRET")
+        ])
+        
+        if use_cloudinary:
+            try:
+                result = cloudinary.uploader.upload(
+                    audio.file,
+                    folder="trinetra/sos_audio",
+                    public_id=f"{officer_id}_{int(now.timestamp())}",
+                    resource_type="auto"
+                )
+                audio_url = result['secure_url']
+                print(f"✅ Audio uploaded: {audio_url}")
+            except Exception as e:
+                print(f"❌ Upload failed: {e}")
+        else:
+            audio_path = f"static/uploads/sos_audio/{officer_id}_{int(now.timestamp())}.m4a"
+            os.makedirs("static/uploads/sos_audio", exist_ok=True)
+            with open(audio_path, "wb") as buffer:
+                shutil.copyfileobj(audio.file, buffer)
+            audio_url = f"/{audio_path}"
+    
+    # Update officer state
+    async with officers_lock:
+        if officer_id in officers:
+            officer = officers[officer_id]
+            officer.sos_active = True
+            officer.sos_triggered_at = now
+            officer.sos_type = emergency_type
+            officer.sos_message = message_text
+            officer.sos_audio_url = audio_url
+        else:
+            officers[officer_id] = OfficerState(
+                officer_id=officer_id,
+                officer_name=officer_name,
+                badge_number=badge_number,
+                is_online=True,
+                last_location={"lat": lat, "lng": lng},
+                last_seen=now,
+                sos_active=True,
+                sos_triggered_at=now,
+                sos_type=emergency_type,
+                sos_message=message_text,
+                sos_audio_url=audio_url,
+            )
+    
+    # Find nearby officers
+    nearby_officers = find_nearby_officers(officer_id, lat, lng)
+    print(f"📍 {len(nearby_officers)} nearby officers")
+    
+    # Save to MongoDB
+    try:
+        sos_collection = db.get_collection("sos_events")
+        await sos_collection.insert_one({
+            "officer_id": officer_id,
+            "officer_name": officer_name,
+            "badge_number": badge_number,
+            "lat": lat,
+            "lng": lng,
+            "emergency_type": emergency_type,
+            "message_text": message_text,
+            "audio_url": audio_url,
+            "audio_duration": audio_duration,
+            "nearby_officers": nearby_officers,
+            "status": "triggered",
+            "triggered_at": now,
+        })
+    except Exception as e:
+        print(f"❌ MongoDB error: {e}")
+    
+    # Broadcast
+    await broadcast({
+        "type": "officer_sos_alert",
+        "officer_id": officer_id,
+        "officer_name": officer_name,
+        "badge_number": badge_number,
+        "lat": lat,
+        "lng": lng,
+        "sos_active": True,
+        "emergency_type": emergency_type,
+        "message_text": message_text,
+        "audio_url": audio_url,
+        "audio_duration": audio_duration,
+        "triggered_at": now.isoformat(),
+        "nearby_officers": nearby_officers,
+    })
+    
+    return {"ok": True, "nearby_officers": nearby_officers}
+
+
+@app.post("/api/officers/{officer_id}/sos/cancel")
+async def cancel_sos(officer_id: str, payload: SOSCancel) -> Dict[str, Any]:
+    """Cancel SOS alert"""
+    print(f"❌ SOS CANCELED: {officer_id} - {payload.reason}")
+    
+    async with officers_lock:
+        if officer_id in officers:
+            officers[officer_id].sos_active = False
+            officers[officer_id].sos_triggered_at = None
+    
+    try:
+        sos_collection = db.get_collection("sos_events")
+        await sos_collection.update_many(
+            {"officer_id": officer_id, "status": "triggered"},
+            {"$set": {"status": "cancelled", "cancelled_at": datetime.utcnow()}}
+        )
+    except Exception as e:
+        print(f"❌ MongoDB error: {e}")
+    
+    await broadcast({
+        "type": "officer_sos_cancelled",
+        "officer_id": officer_id,
+    })
+    
+    return {"ok": True}
+
 
 
 @app.websocket("/ws/locations")
